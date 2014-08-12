@@ -12,9 +12,13 @@ from ws4py.client.threadedclient import WebSocketClient
 STREAM_BASE_URL = 'wss://stream.pushbullet.com/websocket/{0}'
 
 DEBUG = False
-def LOG(msg):
-	print 'PushbulletTargets: {0}'.format(msg)
+def LOG(msg): pass
 
+class PushbulletException(Exception):
+	def __init__(self,error):
+		self.type = error.get('type')
+		self.message = error.get('message')
+		Exception.__init__(self)
 
 class Device:
 	settings = {}
@@ -24,6 +28,20 @@ class Device:
 		self.name = name
 		self.data = data
 		self._bulletHoles = {}
+		self.init()
+
+	def __eq__(self,other):
+		if not isinstance(other, Device): return False
+		return self.ID == other.ID
+
+	def __ne__(self,other):
+		return not self.__eq__(other)
+								
+	def init(self):
+		pass
+	
+	def isValid(self):
+		return bool(self.ID)
 
 	def getSetting(self,sid):
 		default = self.settings.get(sid)
@@ -43,16 +61,21 @@ class Device:
 		if self._bulletHoles.get(ID) >= modified: return
 		self._bulletHoles[ID] = modified
 		bType = bullet.get('type')
-		if bType == 'note':
+		if bType == 'link':
+			return self.link(bullet)
+		elif bType == 'note':
 			return self.note(bullet)
 		else:
-			return self.unknown(bullet)
+			return self.unhandled(bullet)
 		
-	def note(self,data):
-		LOG('NOTE_NOT_IMPL: {0}'.format(data))
+	def link(self,data):
+		self.unhandled(data)
 
-	def unknown(self,data):
-		LOG('UNKNOWN_NOT_IMPL: {0}'.format(data))
+	def note(self,data):
+		self.unhandled(data)
+
+	def unhandled(self,data):
+		if DEBUG: LOG('NOT_IMPL: {0}'.format(data))
 
 class Client:
 	baseURL = 'https://api.pushbullet.com/v2/{0}'
@@ -70,6 +93,35 @@ class Client:
 		
 	def deletePush(self,ID):
 		requests.delete(self.baseURL.format('pushes/{0}'.format(ID)),auth=(self.token,''))
+		
+	def getDevicesList(self):
+		req = requests.get(self.baseURL.format('devices'),auth=(self.token,''))
+		data = req.json()
+		if 'error' in data:
+			LOG(data['error'])
+			raise PushbulletException(data['error'])
+		return data.get('devices')
+
+	def addDevice(self,device):
+		if device.ID: return
+		req = requests.post(self.baseURL.format('devices'),auth=(self.token,''),data={'nickname':device.name,'type':'stream'})
+		data = req.json()
+		if 'error' in data:
+			LOG(data['error'])
+			raise PushbulletException(data['error'])
+		device.ID = data.get('iden')
+		return True
+
+	def updateDevice(self,device,**kwargs):
+		assert device.ID != None, 'Invalid Device'
+		req = requests.post(self.baseURL.format('devices/{0}'.format(device.ID)),auth=(self.token,''),data=kwargs)
+		data = req.json()
+		if 'error' in data:
+			LOG(data['error'])
+			raise PushbulletException(data['error'])
+		print data
+		device.name = data.get('nickname',device.name)
+		return True
 
 class Targets(WebSocketClient):
 	def __init__(self,token):
@@ -129,10 +181,13 @@ class Targets(WebSocketClient):
 	def registerDevice(self,device):
 		if not device.ID in self.devices: self.devices[device.ID] = device
 	
-	def unregisterDevice(self,ID):
+	def unregisterDevice(self,device):
+		self.unregisterDeviceByID(device.ID)
+		
+	def unregisterDeviceByID(self,ID):
 		if ID in self.devices: del self.devices[ID]
 		
-	def close(self):
+	def close(self,force=False):
 		WebSocketClient.close(self)
 		self.client_terminated = True
-		self.server_terminated = True
+		if force: self.close_connection()
