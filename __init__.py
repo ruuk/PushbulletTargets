@@ -11,7 +11,7 @@ from ws4py.client.threadedclient import WebSocketClient
 
 STREAM_BASE_URL = 'wss://stream.pushbullet.com/websocket/{0}'
 
-DEBUG = False
+DEBUG = True
 def LOG(msg): pass
 
 class PushbulletException(Exception):
@@ -22,11 +22,12 @@ class PushbulletException(Exception):
 
 class Device:
 	settings = {}
-	
+
 	def __init__(self,ID,name=None,data=None):
 		self.ID = ID
 		self.name = name
 		self.data = data
+		self.mostRecent = 0
 		self._bulletHoles = {}
 		self.init()
 
@@ -58,6 +59,7 @@ class Device:
 	def getShot(self,bullet):
 		ID = bullet.get('iden')
 		modified = bullet.get('modified')
+		if modified > self.mostRecent: self.mostRecent = modified
 		if self._bulletHoles.get(ID) >= modified: return
 		self._bulletHoles[ID] = modified
 		bType = bullet.get('type')
@@ -83,9 +85,17 @@ class Client:
 	def __init__(self,token):
 		self.token = token
 
-	def pushes(self):
-		req = requests.get(self.baseURL.format('pushes'),auth=(self.token,''))
-		data = req.json()
+	def pushes(self,modified_after=0):
+		params = {'modified_after':'{:10f}'.format(modified_after)}
+		req = requests.get(self.baseURL.format('pushes'),auth=(self.token,''),params=params)
+		try:
+			data = req.json()
+		except:
+			if DEBUG:
+				print repr(req.text)
+			else:
+				LOG('JSON decode error')
+			
 		return data.get('pushes')
 
 	def dismissPush(self,ID):
@@ -119,12 +129,13 @@ class Client:
 		if 'error' in data:
 			LOG(data['error'])
 			raise PushbulletException(data['error'])
-		print data
 		device.name = data.get('nickname',device.name)
 		return True
 
 class Targets(WebSocketClient):
-	def __init__(self,token):
+	def __init__(self,token,most_recent=0,most_recent_callback=None):
+		self.mostRecent = most_recent
+		self.mostRecentUpdated = most_recent_callback or self.mostRecentUpdated
 		self.lastPing = time.time()
 		self.client = Client(token)
 		self.devices = {}
@@ -158,28 +169,42 @@ class Targets(WebSocketClient):
 					LOG('UNHANDLED MESSAGE: {0}'.format(json.loads(unicode(message)).get('type')))
 				except:
 					pass
-			
+
 	def gunfire(self):
-		pushes = self.client.pushes()
+		pushes = self.client.pushes(modified_after=self.mostRecent)
+		if not pushes: return
 		for bullet in pushes:
 			if not bullet.get('active') or bullet.get('dismissed'): continue
+			modified = bullet.get('modified')
+			if modified <= self.mostRecent: continue
+			self.updateMostRecent(modified)
 			tID = bullet.get('target_device_iden')
 			if tID in self.devices:
 				dev = self.devices[tID]
 				if DEBUG: LOG('SHOT: {0}'.format(dev.name))
 				if dev.getShot(bullet):
-					self.client.deletePush(bullet.get('iden'))
+					self.deletePush(bullet)
 
 	def pinged(self):
 		now = time.time()
 		if DEBUG: LOG('PING: {0:.2f}'.format(now - self.lastPing))
 		self.lastPing = now
+	
+	def updateMostRecent(self,modified):
+		self.mostRecentUpdated(modified)
+		self.mostRecent = modified
+
+	def mostRecentUpdated(self,modified): pass
 
 	def changed(self):
 		if DEBUG: LOG('CHANGED')
 		
+	def deletePush(self,bullet):
+		self.client.deletePush(bullet.get('iden'))
+		
 	def registerDevice(self,device):
-		if not device.ID in self.devices: self.devices[device.ID] = device
+		self.unregisterDeviceByID(device.ID)
+		self.devices[device.ID] = device
 	
 	def unregisterDevice(self,device):
 		self.unregisterDeviceByID(device.ID)
