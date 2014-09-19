@@ -11,7 +11,7 @@ from ws4py.client.threadedclient import WebSocketClient
 
 STREAM_BASE_URL = 'wss://stream.pushbullet.com/websocket/{0}'
 
-DEBUG = True
+DEBUG = False
 def LOG(msg): pass
 
 class PushbulletException(Exception):
