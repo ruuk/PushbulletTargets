@@ -67,6 +67,12 @@ class Device:
 			return self.link(bullet)
 		elif bType == 'note':
 			return self.note(bullet)
+		elif bType == 'file':
+			return self.file(bullet)
+		elif bType == 'address':
+			return self.address(bullet)
+		elif bType == 'list':
+			return self.list(bullet)
 		else:
 			return self.unhandled(bullet)
 		
@@ -74,6 +80,15 @@ class Device:
 		self.unhandled(data)
 
 	def note(self,data):
+		self.unhandled(data)
+	
+	def file(self,data):
+		self.unhandled(data)
+		
+	def address(self,data):
+		self.unhandled(data)
+		
+	def list(self,data):
 		self.unhandled(data)
 
 	def unhandled(self,data):
@@ -86,7 +101,7 @@ class Client:
 		self.token = token
 
 	def pushes(self,modified_after=0):
-		params = {'modified_after':'{:10f}'.format(modified_after)}
+		params = {'modified_after':modified_after and '{0:10f}'.format(modified_after) or '0'}
 		req = requests.get(self.baseURL.format('pushes'),auth=(self.token,''),params=params)
 		try:
 			data = req.json()
@@ -98,10 +113,15 @@ class Client:
 			
 		return data.get('pushes')
 
+	def modifyPush(self,data):
+		requests.post(self.baseURL.format('pushes/{0}'.format(data.get('iden'))),auth=(self.token,''),data=json.dumps(data),headers={'Content-type': 'application/json', 'Accept': 'text/plain'})
+
 	def dismissPush(self,ID):
+		if isinstance(ID,dict): ID = ID.get('iden')
 		requests.post(self.baseURL.format('pushes/{0}'.format(ID)),auth=(self.token,''),data={'dismissed':'true'})
 		
 	def deletePush(self,ID):
+		if isinstance(ID,dict): ID = ID.get('iden')
 		requests.delete(self.baseURL.format('pushes/{0}'.format(ID)),auth=(self.token,''))
 		
 	def getDevicesList(self):
